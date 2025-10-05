@@ -289,19 +289,15 @@ Contributions are what make the open-source community amazing! Any contributions
 
 ---
 
-## 📝 License
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
 ---
 
 ## 👤 Author
 
-**Your Name**
+**Gururaghavendra P**
 
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/yourprofile)
-- GitHub: [@YourUsername](https://github.com/YourUsername)
-- Email: your.email@example.com
+- LinkedIn: [My Linkedin](https://www.linkedin.com/in/gururaghavendra-padmanaban-455867290/)
+- GitHub: [Gururaghavendra123](https://github.com/YourUsername)
+- Email: pgururaghavandra1@gmail.com
 
 ---
 
@@ -332,6 +328,6 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 **⭐ Star this repo if you found it helpful! ⭐**
 
-Made with ❤️ and ☕ by [Your Name]
+Made with ❤️ and ☕ by Gururaghavendra
 
 </div>
