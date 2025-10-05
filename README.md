@@ -1,12 +1,5 @@
 # 🏎️ F1 Race Predictor
 
-<div align="center">
-
-![F1 Race Predictor](https://img.shields.io/badge/F1-Race%20Predictor-red?style=for-the-badge&logo=formula1)
-![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.95+-009688?style=for-the-badge&logo=fastapi)
-
 ---
 
 ## 👤 Author
@@ -18,6 +11,13 @@
 - Email: pgururaghavandra1@gmail.com
 
 ---
+
+<div align="center">
+
+![F1 Race Predictor](https://img.shields.io/badge/F1-Race%20Predictor-red?style=for-the-badge&logo=formula1)
+![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python)
+![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.95+-009688?style=for-the-badge&logo=fastapi)
 
 **AI-Powered Formula 1 Race Outcome Prediction using Machine Learning**
 
