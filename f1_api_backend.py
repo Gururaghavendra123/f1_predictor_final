@@ -39,7 +39,10 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+     allow_origins=[
+        "http://localhost:3000",
+        "https://*.vercel.app",  # This allows any Vercel deployment
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -362,9 +365,6 @@ async def get_prediction_template():
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Create necessary directories
-    os.makedirs('models', exist_ok=True)
-    os.makedirs('cache', exist_ok=True)
-    
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
