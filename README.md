@@ -7,6 +7,18 @@
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.95+-009688?style=for-the-badge&logo=fastapi)
 
+---
+
+## 👤 Author
+
+**Gururaghavendra P**
+
+- LinkedIn: [My Linkedin](https://www.linkedin.com/in/gururaghavendra-padmanaban-455867290/)
+- GitHub: [Gururaghavendra123](https://github.com/YourUsername)
+- Email: pgururaghavandra1@gmail.com
+
+---
+
 **AI-Powered Formula 1 Race Outcome Prediction using Machine Learning**
 
 [Live Demo](https://your-vercel-url.vercel.app) • [Report Bug](https://github.com/Gururaghavendra123/f1_predictor_final/issues) • [Request Feature](https://github.com/Gururaghavendra123/f1_predictor_final/issues)
@@ -286,18 +298,6 @@ Contributions are what make the open-source community amazing! Any contributions
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
-
----
-
----
-
-## 👤 Author
-
-**Gururaghavendra P**
-
-- LinkedIn: [My Linkedin](https://www.linkedin.com/in/gururaghavendra-padmanaban-455867290/)
-- GitHub: [Gururaghavendra123](https://github.com/YourUsername)
-- Email: pgururaghavandra1@gmail.com
 
 ---
 
