@@ -41,7 +41,7 @@ app.add_middleware(
     CORSMiddleware,
      allow_origins=[
         "http://localhost:3000",
-        "https://f1racepredictor-5zzkvad5c-gururaghavendrap05-gmailcoms-projects.vercel.app/",
+        "https://f1racepredictor-779fe7phi-gururaghavendrap05-gmailcoms-projects.vercel.app",
         "https://*.vercel.app",  # This allows any Vercel deployment
     ],
     allow_credentials=True,
