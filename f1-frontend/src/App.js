@@ -1,464 +1,306 @@
-import React, { useState, useEffect } from 'react';
-import { Trophy, Zap, CloudRain, Thermometer, Users, MapPin, Settings, Play, RotateCcw } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Flag, Gauge, Thermometer, Droplets, CloudRain, Radio, ChevronDown,
+  Plus, X, Activity, Cpu, AlertTriangle, Wind,
+} from 'lucide-react';
+import './App.css';
 
-const F1Predictor = () => {
-  const [isTraining, setIsTraining] = useState(false);
-  const [isPredicting, setIsPredicting] = useState(false);
-  const [modelsTrained, setModelsTrained] = useState(false);
-  const [predictions, setPredictions] = useState([]);
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const PREFERRED = ['VER', 'NOR', 'LEC', 'PIA', 'RUS', 'HAM', 'ANT', 'ALO'];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export default function App() {
+  const [modelInfo, setModelInfo] = useState(null);
   const [drivers, setDrivers] = useState([]);
   const [tracks, setTracks] = useState([]);
-  
-  // Form state
-  const [raceConditions, setRaceConditions] = useState({
-    track_name: 'Monaco',
-    country: 'Monaco',
-    track_temp: 25,
-    air_temp: 20,
-    humidity: 50,
-    rainfall: false,
-    track_type: 'street'
+  const [predictions, setPredictions] = useState([]);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [error, setError] = useState('');
+
+  const [conditions, setConditions] = useState({
+    track_name: '', country: '', track_temp: 30, air_temp: 24,
+    humidity: 55, rainfall: false, track_type: 'normal', era: 1,
   });
-  
-  const [selectedDrivers, setSelectedDrivers] = useState([
-    { driver_code: 'VER', grid_position: 1 },
-    { driver_code: 'HAM', grid_position: 2 },
-    { driver_code: 'LEC', grid_position: 3 },
-    { driver_code: 'RUS', grid_position: 4 },
-    { driver_code: 'NOR', grid_position: 5 }
-  ]);
+  const [grid, setGrid] = useState([]);
 
-  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-
+  // ---- boot ----
   useEffect(() => {
-    checkModelStatus();
-    loadDrivers();
-    loadTracks();
+    (async () => {
+      try {
+        const [mi, dr, tk] = await Promise.all([
+          fetch(`${API_BASE}/model-info`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_BASE}/drivers`).then((r) => r.json()).catch(() => ({ drivers: [] })),
+          fetch(`${API_BASE}/tracks`).then((r) => r.json()).catch(() => ({ tracks: [] })),
+        ]);
+        setModelInfo(mi);
+        const dlist = dr?.drivers || [];
+        const tlist = tk?.tracks || [];
+        setDrivers(dlist);
+        setTracks(tlist);
+
+        const def = tlist.find((t) => /Monaco/i.test(t.name)) || tlist[0];
+        if (def) setConditions((c) => ({ ...c, track_name: def.name, country: def.country, track_type: def.type }));
+
+        const picks = PREFERRED.filter((d) => dlist.includes(d)).slice(0, 8);
+        const seed = (picks.length ? picks : dlist.slice(0, 8));
+        setGrid(seed.map((code, i) => ({ driver_code: code, grid_position: i + 1 })));
+      } catch (e) {
+        setError('Could not reach the API. Is the backend running on :8000?');
+      }
+    })();
   }, []);
 
-  const checkModelStatus = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/model-info`);
-      const data = await response.json();
-      setModelsTrained(data.status === 'trained');
-    } catch (error) {
-      console.error('Error checking model status:', error);
-    }
+  const ready = modelInfo?.status === 'trained';
+
+  // ---- handlers ----
+  const onTrack = (name) => {
+    const t = tracks.find((x) => x.name === name);
+    if (t) setConditions((c) => ({ ...c, track_name: t.name, country: t.country, track_type: t.type }));
   };
+  const setCond = (k, v) => setConditions((c) => ({ ...c, [k]: v }));
+  const setRow = (i, k, v) => setGrid((g) => g.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  const addRow = () => setGrid((g) => (g.length < 20 ? [...g, { driver_code: drivers.find((d) => !g.some((r) => r.driver_code === d)) || drivers[0], grid_position: g.length + 1 }] : g));
+  const delRow = (i) => setGrid((g) => g.filter((_, idx) => idx !== i));
 
-  const loadDrivers = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/drivers`);
-      const data = await response.json();
-      setDrivers(data.drivers);
-    } catch (error) {
-      console.error('Error loading drivers:', error);
-    }
-  };
-
-  const loadTracks = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/tracks`);
-      const data = await response.json();
-      setTracks(data.tracks);
-    } catch (error) {
-      console.error('Error loading tracks:', error);
-    }
-  };
-
-  const handleTrain = async () => {
-    setIsTraining(true);
-    try {
-      const response = await fetch(`${API_BASE}/train`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ years: [2022, 2023, 2024], retrain: false })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Training completed:', data);
-        setModelsTrained(true);
-        alert('Models trained successfully!');
-      } else {
-        const error = await response.json();
-        alert(`Training failed: ${error.detail}`);
-      }
-    } catch (error) {
-      console.error('Training error:', error);
-      alert('Training failed. Please check the console.');
-    } finally {
-      setIsTraining(false);
-    }
-  };
-
-  const handlePredict = async () => {
-    if (!modelsTrained) {
-      alert('Please train models first!');
-      return;
-    }
-
+  const predict = async () => {
+    if (!ready) { setError('Model not loaded. Run `python train.py`, then restart the API.'); return; }
+    if (!grid.length) { setError('Add at least one driver to the grid.'); return; }
+    setError('');
     setIsPredicting(true);
+    setPredictions([]);
     try {
-      const requestData = {
-        race_conditions: raceConditions,
-        drivers: selectedDrivers
-      };
-
-      const response = await fetch(`${API_BASE}/predict`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestData)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Sort by predicted position (1, 2, 3, 4, etc.)
-        const sortedPredictions = data.sort((a, b) => a.predicted_position - b.predicted_position);
-        
-        setPredictions(sortedPredictions);
-      } else {
-        const error = await response.json();
-        alert(`Prediction failed: ${error.detail}`);
+      const body = { race_conditions: conditions, drivers: grid };
+      const [res] = await Promise.all([
+        fetch(`${API_BASE}/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        sleep(1500), // let the lights sequence breathe
+      ]);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Request failed (${res.status})`);
       }
-    } catch (error) {
-      console.error('Prediction error:', error);
-      alert('Prediction failed. Please check the console.');
+      const data = await res.json();
+      data.sort((a, b) => a.predicted_position - b.predicted_position);
+      setPredictions(data);
+    } catch (e) {
+      setError(e.message || 'Prediction failed.');
     } finally {
       setIsPredicting(false);
     }
   };
 
-  const handleTrackChange = (trackName) => {
-    const track = tracks.find(t => t.name === trackName);
-    if (track) {
-      setRaceConditions(prev => ({
-        ...prev,
-        track_name: trackName,
-        country: track.country,
-        track_type: track.type
-      }));
-    }
-  };
+  const podium = useMemo(() => predictions.filter((p) => p.predicted_position <= 3), [predictions]);
+  const rest = useMemo(() => predictions.filter((p) => p.predicted_position > 3), [predictions]);
+  const maxWin = useMemo(() => Math.max(0.01, ...predictions.map((p) => p.win_probability)), [predictions]);
 
-  const updateDriver = (index, field, value) => {
-    const updated = [...selectedDrivers];
-    updated[index] = { ...updated[index], [field]: value };
-    setSelectedDrivers(updated);
-  };
-
-  const addDriver = () => {
-    if (selectedDrivers.length < 10) {
-      setSelectedDrivers([...selectedDrivers, { driver_code: 'ALO', grid_position: selectedDrivers.length + 1 }]);
-    }
-  };
-
-  const removeDriver = (index) => {
-    setSelectedDrivers(selectedDrivers.filter((_, i) => i !== index));
-  };
-
-  const getPodiumColor = (position) => {
-    const pos = parseInt(position);
-    if (pos === 1) return 'bg-yellow-400 text-yellow-900';
-    if (pos === 2) return 'bg-gray-400 text-gray-900';
-    if (pos === 3) return 'bg-orange-500 text-white';
-    return 'bg-gray-700 text-gray-300';
-  };
-
-  const getBorderColor = (position) => {
-    const pos = parseInt(position);
-    if (pos === 1) return 'border-yellow-500';
-    if (pos === 2) return 'border-gray-400';
-    if (pos === 3) return 'border-orange-500';
-    return 'border-gray-600';
-  };
+  const humidityFill = `${conditions.humidity}%`;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white">
-      {/* Header */}
-      <div className="bg-black/50 backdrop-blur-sm border-b border-red-600/30">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Trophy className="h-8 w-8 text-red-500" />
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-red-500 to-white bg-clip-text text-transparent">
-                F1 Race Predictor
-              </h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className={`px-3 py-1 rounded-full text-sm ${modelsTrained ? 'bg-green-600' : 'bg-yellow-600'}`}>
-                {modelsTrained ? 'Models Ready' : 'Needs Training'}
-              </div>
-            </div>
+    <div className="oracle">
+      {/* ---------------- TOP BAR ---------------- */}
+      <header className="topbar reveal">
+        <div className="brand">
+          <div className="brand-mark"><Flag size={24} strokeWidth={2.5} /></div>
+          <div>
+            <h1>Ghost <em>Lap</em></h1>
+            <div className="sub">Predicting F1 race outcomes with machine learning and real data</div>
           </div>
         </div>
-      </div>
+        <div className={`status-pill ${ready ? 'live' : ''}`}>
+          <span className="dot" />
+          {ready ? 'Model Online' : 'Model Offline'}
+          {ready && modelInfo?.trained_through && (
+            <span className="meta">· thru {modelInfo.trained_through}</span>
+          )}
+        </div>
+      </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Training Panel */}
-          <div className="lg:col-span-1">
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700 p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center">
-                <Settings className="h-5 w-5 mr-2 text-red-500" />
-                Model Training
-              </h2>
-              
-              <div className="space-y-4">
-                <p className="text-gray-300 text-sm">
-                  Train the AI models using historical F1 data to make accurate predictions.
-                </p>
-                
-                <button
-                  onClick={handleTrain}
-                  disabled={isTraining}
-                  className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center"
-                >
-                  {isTraining ? (
-                    <>
-                      <RotateCcw className="h-4 w-4 mr-2 animate-spin" />
-                      Training Models...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="h-4 w-4 mr-2" />
-                      {modelsTrained ? 'Retrain Models' : 'Train Models'}
-                    </>
-                  )}
-                </button>
-                
-                {isTraining && (
-                  <div className="text-sm text-yellow-400 bg-yellow-400/10 p-3 rounded-lg">
-                    ⚠️ Training may take 5-10 minutes. Please wait...
-                  </div>
+      <div className="stage">
+        {/* ---------------- COLUMN 1: CIRCUIT + CONDITIONS ---------------- */}
+        <section className="col-setup">
+          <div className="panel reveal" style={{ animationDelay: '0.05s' }}>
+            <div className="panel-head">
+              <span className="panel-num">01</span>
+              <h2 className="panel-title">Circuit</h2>
+              <Radio className="panel-icon" size={16} />
+            </div>
+            <div className="panel-body">
+              <div className="field-label"><Flag size={11} /> Grand Prix</div>
+              <div className="select-wrap">
+                <select className="input" value={conditions.track_name} onChange={(e) => onTrack(e.target.value)}>
+                  {tracks.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                </select>
+                <ChevronDown className="chev" size={16} />
+              </div>
+              <div className="circuit-flag">
+                {conditions.country || '—'}
+                {conditions.track_type && conditions.track_type !== 'normal' && (
+                  <span className="tag">{conditions.track_type}</span>
                 )}
               </div>
-            </div>
 
-            {/* Race Conditions */}
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700 p-6 mt-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center">
-                <MapPin className="h-5 w-5 mr-2 text-blue-500" />
-                Race Conditions
-              </h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Track</label>
-                  <select
-                    value={raceConditions.track_name}
-                    onChange={(e) => handleTrackChange(e.target.value)}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                  >
-                    {tracks.map(track => (
-                      <option key={track.name} value={track.name}>
-                        {track.name} ({track.country})
-                      </option>
-                    ))}
-                  </select>
+              <div className="cond-grid">
+                <div className="cond">
+                  <div className="k"><Thermometer size={11} /> Track</div>
+                  <div className="v">{conditions.track_temp}<small>°C</small></div>
+                  <input type="number" value={conditions.track_temp}
+                    onChange={(e) => setCond('track_temp', parseFloat(e.target.value) || 0)} />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      <Thermometer className="h-4 w-4 inline mr-1" />
-                      Track Temp (°C)
-                    </label>
-                    <input
-                      type="number"
-                      value={raceConditions.track_temp}
-                      onChange={(e) => setRaceConditions(prev => ({...prev, track_temp: parseFloat(e.target.value)}))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Air Temp (°C)</label>
-                    <input
-                      type="number"
-                      value={raceConditions.air_temp}
-                      onChange={(e) => setRaceConditions(prev => ({...prev, air_temp: parseFloat(e.target.value)}))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                    />
-                  </div>
+                <div className="cond">
+                  <div className="k"><Wind size={11} /> Air</div>
+                  <div className="v">{conditions.air_temp}<small>°C</small></div>
+                  <input type="number" value={conditions.air_temp}
+                    onChange={(e) => setCond('air_temp', parseFloat(e.target.value) || 0)} />
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">Humidity (%)</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={raceConditions.humidity}
-                    onChange={(e) => setRaceConditions(prev => ({...prev, humidity: parseInt(e.target.value)}))}
-                    className="w-full"
-                  />
-                  <div className="text-center text-sm text-gray-400">{raceConditions.humidity}%</div>
+              <div className="slider-row">
+                <div className="slider-top">
+                  <span className="field-label" style={{ margin: 0 }}><Droplets size={11} /> Humidity</span>
+                  <span className="val">{conditions.humidity}%</span>
                 </div>
+                <input type="range" min="0" max="100" value={conditions.humidity}
+                  style={{ '--fill': humidityFill }}
+                  onChange={(e) => setCond('humidity', parseInt(e.target.value, 10))} />
+              </div>
 
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    checked={raceConditions.rainfall}
-                    onChange={(e) => setRaceConditions(prev => ({...prev, rainfall: e.target.checked}))}
-                    className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded"
-                  />
-                  <label className="text-sm font-medium flex items-center">
-                    <CloudRain className="h-4 w-4 mr-1 text-blue-400" />
-                    Rain Expected
-                  </label>
+              <div className="toggle-row">
+                <div className={`toggle ${conditions.rainfall ? 'on' : ''}`}
+                  onClick={() => setCond('rainfall', !conditions.rainfall)}>
+                  <CloudRain className="tg-icon" size={18} />
+                  <div className="tg-text"><b>{conditions.rainfall ? 'Wet' : 'Dry'}</b><span>Conditions</span></div>
+                </div>
+                <div className={`toggle era ${conditions.era === 1 ? 'on' : ''}`}
+                  onClick={() => setCond('era', conditions.era === 1 ? 0 : 1)}>
+                  <Cpu className="tg-icon" size={18} />
+                  <div className="tg-text"><b>{conditions.era === 1 ? '2026+' : '2022–25'}</b><span>Rules Era</span></div>
                 </div>
               </div>
             </div>
           </div>
+        </section>
 
-          {/* Drivers Selection */}
-          <div className="lg:col-span-1">
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold flex items-center">
-                  <Users className="h-5 w-5 mr-2 text-green-500" />
-                  Drivers ({selectedDrivers.length})
-                </h2>
-                <button
-                  onClick={addDriver}
-                  disabled={selectedDrivers.length >= 10}
-                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 px-3 py-1 rounded text-sm"
-                >
-                  + Add
+        {/* ---------------- COLUMN 2: STARTING GRID ---------------- */}
+        <section className="col-grid">
+          <div className="panel reveal" style={{ animationDelay: '0.12s' }}>
+            <div className="panel-head">
+              <span className="panel-num">02</span>
+              <h2 className="panel-title">Starting Grid</h2>
+              <Gauge className="panel-icon" size={16} />
+            </div>
+            <div className="panel-body">
+              <div className="grid-meta">
+                <span className="grid-count">{grid.length} / 20 cars</span>
+                <button className="add-btn" onClick={addRow} disabled={grid.length >= 20 || !drivers.length}>
+                  <Plus size={13} /> Add Car
                 </button>
               </div>
 
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {selectedDrivers.map((driver, index) => (
-                  <div key={index} className="bg-gray-700/50 rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">Driver {index + 1}</span>
-                      <button
-                        onClick={() => removeDriver(index)}
-                        className="text-red-400 hover:text-red-300 text-sm"
-                      >
-                        Remove
-                      </button>
+              <div className="grid-list">
+                {grid.map((row, i) => (
+                  <div className="grid-row" key={i}>
+                    <div className="grid-slot">{row.grid_position}</div>
+                    <div className="select-wrap">
+                      <select className="drv" value={row.driver_code}
+                        onChange={(e) => setRow(i, 'driver_code', e.target.value)}>
+                        {drivers.map((d) => <option key={d} value={d}>{d}</option>)}
+                      </select>
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Driver</label>
-                        <select
-                          value={driver.driver_code}
-                          onChange={(e) => updateDriver(index, 'driver_code', e.target.value)}
-                          className="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm"
-                        >
-                          {drivers.map(code => (
-                            <option key={code} value={code}>{code}</option>
-                          ))}
-                        </select>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Grid Pos</label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="20"
-                          value={driver.grid_position}
-                          onChange={(e) => updateDriver(index, 'grid_position', parseInt(e.target.value))}
-                          className="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm"
-                        />
-                      </div>
-                    </div>
+                    <input className="gp" type="number" min="1" max="20" value={row.grid_position}
+                      onChange={(e) => setRow(i, 'grid_position', parseInt(e.target.value, 10) || 1)} />
+                    <button className="row-x" onClick={() => delRow(i)} aria-label="remove"><X size={15} /></button>
                   </div>
                 ))}
               </div>
 
-              <button
-                onClick={handlePredict}
-                disabled={isPredicting || !modelsTrained || selectedDrivers.length === 0}
-                className="w-full mt-6 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center"
-              >
-                {isPredicting ? (
-                  <>
-                    <RotateCcw className="h-4 w-4 mr-2 animate-spin" />
-                    Predicting...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Predict Race
-                  </>
-                )}
+              <button className={`launch ${isPredicting ? 'armed' : ''}`} onClick={predict}
+                disabled={isPredicting || !ready}>
+                <div className="lights">
+                  {[0, 1, 2, 3, 4].map((n) => <span className="light" key={n} />)}
+                </div>
+                <div className="launch-label">
+                  <Activity size={18} />
+                  {isPredicting ? 'Lights Out…' : 'Run Prediction'}
+                </div>
+                <div className="launch-hint">
+                  {ready ? 'Simulate finishing order' : 'Awaiting model'}
+                </div>
               </button>
-            </div>
-          </div>
 
-          {/* Predictions Results */}
-          <div className="lg:col-span-1">
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700 p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center">
-                <Trophy className="h-5 w-5 mr-2 text-yellow-500" />
-                Race Predictions
-              </h2>
-
-              {predictions.length === 0 ? (
-                <div className="text-center text-gray-400 py-8">
-                  <Trophy className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>Run a prediction to see results</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {predictions.map((pred, index) => (
-                    <div
-                      key={pred.driver}
-                      className={`p-4 rounded-lg border-l-4 ${getBorderColor(pred.predicted_position)} ${
-                        pred.predicted_position <= 3 
-                          ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-                          : 'bg-gray-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${getPodiumColor(pred.predicted_position)}`}>
-                            {pred.predicted_position}
-                          </div>
-                          <span className="font-semibold text-lg">{pred.driver}</span>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-medium text-white">
-                            {(pred.win_probability * 100).toFixed(1)}% win
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {(pred.podium_probability * 100).toFixed(1)}% podium
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="w-full bg-gray-700 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full transition-all duration-500 ${
-                            pred.predicted_position === 1 ? 'bg-yellow-500' :
-                            pred.predicted_position === 2 ? 'bg-gray-400' :
-                            pred.predicted_position === 3 ? 'bg-orange-500' :
-                            'bg-gray-500'
-                          }`}
-                          style={{ width: `${pred.confidence * 100}%` }}
-                        ></div>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        Confidence: {(pred.confidence * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {error && (
+                <div className="banner"><AlertTriangle size={14} /> {error}</div>
               )}
             </div>
           </div>
-        </div>
+        </section>
+
+        {/* ---------------- COLUMN 3: RESULTS ---------------- */}
+        <section className="col-results">
+          <div className="panel reveal" style={{ animationDelay: '0.19s' }}>
+            <div className="panel-head">
+              <span className="panel-num">03</span>
+              <h2 className="panel-title">Predicted Classification</h2>
+              <Flag className="panel-icon" size={16} />
+            </div>
+            <div className="panel-body">
+              {predictions.length === 0 ? (
+                <div className="empty">
+                  <div className="big">P?</div>
+                  <p>Run a prediction to see the grid</p>
+                </div>
+              ) : (
+                <>
+                  {podium.length > 0 && (
+                    <div className="podium">
+                      {podium.map((p, i) => (
+                        <div className={`pod pod--${p.predicted_position}`} key={p.driver}
+                          style={{ animationDelay: `${0.1 + i * 0.12}s` }}>
+                          <div className="cap">
+                            <span className="medal">{p.predicted_position === 1 ? '🏆' : p.predicted_position === 2 ? '🥈' : '🥉'}</span>
+                            <div className="drv">{p.driver}</div>
+                            <div className="wl">{(p.win_probability * 100).toFixed(0)}% win</div>
+                          </div>
+                          <div className="pos">{p.predicted_position}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {rest.length > 0 && (
+                    <div className="tower">
+                      {rest.map((p, i) => (
+                        <div className={`tower-row p${p.predicted_position}`} key={p.driver}
+                          style={{ animationDelay: `${0.3 + i * 0.06}s` }}>
+                          <div className="tr-pos">{p.predicted_position}</div>
+                          <div className="tr-main">
+                            <div className="tr-name">{p.driver}</div>
+                            <div className="tr-bar">
+                              <i style={{ '--w': `${(p.win_probability / maxWin) * 100}%` }} />
+                            </div>
+                          </div>
+                          <div className="tr-stats">
+                            <div className="tr-win">{(p.win_probability * 100).toFixed(0)}<small>% WIN</small></div>
+                            <div className="tr-sub">EXP P{p.expected_position?.toFixed?.(1)} · {(p.podium_probability * 100).toFixed(0)}% POD</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="res-note">
+                    <span>MODEL · {modelInfo?.model_type || 'position_ranking'}</span>
+                    <span>{modelInfo?.features_count || 25} FEATURES</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
-};
-
-export default F1Predictor;
+}

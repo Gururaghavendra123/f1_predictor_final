@@ -1,333 +1,188 @@
-# 🏎️ F1 Race Predictor
+# Ghost Lap
+
+**Predicting F1 race outcomes with machine learning and real data.**
+
+Ghost Lap takes a starting grid + track conditions and predicts the finishing
+order of a Formula 1 race. It is built on real race data (via the FastF1 API),
+a leakage-free feature pipeline, a single gradient-boosted ranking model, and an
+immersive pit-wall style React UI.
+
+> Honest accuracy (trained on 2022–2024, tested on the **unseen** 2025 season):
+> **50% winner accuracy · 61% podium overlap · 3.55 position MAE.**
+> No data leakage, no inflated numbers — see [`INTERVIEW.md`](INTERVIEW.md) for the full reasoning.
 
 ---
 
-## 👤 Author
+## How it works (at a glance)
 
-**Gururaghavendra P**
-
-- LinkedIn: [My Linkedin](https://www.linkedin.com/in/gururaghavendra-padmanaban-455867290/)
-- GitHub: [Gururaghavendra123](https://github.com/YourUsername)
-- Email: pgururaghavandra1@gmail.com
-
----
-
-<div align="center">
-
-![F1 Race Predictor](https://img.shields.io/badge/F1-Race%20Predictor-red?style=for-the-badge&logo=formula1)
-![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.95+-009688?style=for-the-badge&logo=fastapi)
-
-**AI-Powered Formula 1 Race Outcome Prediction using Machine Learning**
-
-[Live Demo](https://your-vercel-url.vercel.app) • [Report Bug](https://github.com/Gururaghavendra123/f1_predictor_final/issues) • [Request Feature](https://github.com/Gururaghavendra123/f1_predictor_final/issues)
-
-</div>
-
----
-
-## 📖 About The Project
-
-F1 Race Predictor is an intelligent machine learning system that predicts Formula 1 race outcomes based on historical data, driver performance, weather conditions, and track characteristics. The system uses XGBoost and Random Forest algorithms to provide accurate predictions with confidence scores.
-
-### ✨ Key Features
-
-- 🤖 **AI-Powered Predictions** - Uses XGBoost & Random Forest for accurate race outcome predictions
-- 📊 **Driver-Centric Model** - Focuses on individual driver performance, not team/car performance
-- 🌤️ **Weather Integration** - Accounts for track temperature, air temperature, humidity, and rainfall
-- 🏁 **Track Classification** - Analyzes street circuits, high-speed tracks, and technical tracks
-- 🎨 **Modern UI** - Beautiful, responsive React interface with real-time predictions
-- 📈 **Confidence Scores** - Provides win probability, podium probability, and overall confidence
-
-### 🎯 Live Demo
-
-**Frontend:** [https://your-app.vercel.app](https://your-app.vercel.app)  
-**API Docs:** [https://your-api.render.com/docs](https://your-api.render.com/docs)
-
----
-
-## 🛠️ Built With
-
-### Backend
-
-- **Python 3.8+** - Core programming language
-- **FastAPI** - High-performance web framework
-- **FastF1** - F1 data collection API
-- **XGBoost** - Gradient boosting for predictions
-- **scikit-learn** - Machine learning algorithms
-- **Pandas & NumPy** - Data processing
-
-### Frontend
-
-- **React 18** - UI framework
-- **Tailwind CSS** - Styling
-- **Lucide React** - Icons
-- **Vercel** - Deployment platform
-
-### ML Models
-
-- **Win Prediction** - XGBoost Classifier
-- **Podium Prediction** - Random Forest Classifier
-- **Position Prediction** - XGBoost Regressor
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Python 3.8 or higher
-- Node.js 14 or higher
-- npm or yarn
-- 8GB+ RAM (for data processing)
-
-### Installation
-
-#### 1. Clone the repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/f1-race-predictor.git
-cd f1-race-predictor
+```
+ FastF1 API
+     │   raw race results (2022→now)
+     ▼
+ f1_data_collector.py ── incremental parquet store  (data/races/*.parquet)
+     │
+     ▼
+ f1_features.py ── time-ordered, leakage-free features
+     │              (driver form, team/car pace, track history, era, grid…)
+     ▼
+ train.py ── temporal validation + walk-forward, then fit final model
+     │            saves → models/position_model.pkl, scaler.pkl, driver_stats.json
+     ▼
+ f1_api_backend.py ── FastAPI, predict-only (loads model + snapshot)
+     │            POST /predict → ranked finishing order
+     ▼
+ f1-frontend ── React UI (pit-wall design, lights-out predict, timing tower)
 ```
 
-#### 2. Backend Setup
+**One model, one source of truth.** A single `XGBRegressor` predicts each
+driver's *expected finishing position*. Ranking, win % and podium % are all
+derived from that one score, so outputs can never contradict each other.
+
+---
+
+## Why it's different
+
+- **No data leakage.** Driver/team stats for race *R* are computed only from
+  races *before* R. The old "80% accuracy" projects leak the answer into the
+  features; Ghost Lap doesn't — its numbers are real.
+- **Car pace is a feature.** Team/constructor form is modelled explicitly — the
+  car is ~80% of F1 pace, and it's the thing that resets every rules era.
+- **2026-aware.** An `era` flag + recency-weighted training + rolling recent-form
+  features let the model adapt to the 2026 regulation reset as new races arrive.
+- **Validated honestly.** Temporal hold-out (train past → test future season) and
+  walk-forward validation, not random splits on leaked features.
+
+---
+
+## Tech stack
+
+| Layer | Tech |
+|-------|------|
+| Data | FastF1, pandas, pyarrow (parquet) |
+| ML | XGBoost, scikit-learn (scaling), joblib |
+| API | FastAPI, Uvicorn, Pydantic |
+| UI | React 19, lucide-react, pure-CSS animation (Anton / Archivo / JetBrains Mono) |
+
+---
+
+## Project structure
+
+```
+f1_predictor/
+├── f1_data_collector.py   # incremental FastF1 → parquet raw store
+├── f1_features.py         # leakage-free feature builder (train + serve share it)
+├── f1_ml_predictor.py     # the single ranking model (fit / rank / save / load)
+├── train.py               # offline pipeline: validate + fit + save snapshot
+├── f1_api_backend.py      # FastAPI predict-only service
+├── requirements.txt
+├── models/                # position_model.pkl, scaler.pkl, *.json (built by train.py)
+├── data/races/            # parquet raw store (built by collector, git-ignored)
+├── cache/                 # FastF1 HTTP cache (git-ignored)
+├── INTERVIEW.md           # ML interview deep-dive + Q&A
+└── f1-frontend/           # React app
+    ├── src/App.js         # main UI
+    ├── src/App.css        # design system
+    └── src/index.css      # tokens + background
+```
+
+---
+
+## 🚀 Run it locally (step by step)
+
+Prerequisites: **Python 3.11+** and **Node 18+**.
+
+### 1. Backend setup
 
 ```bash
-# Install Python dependencies
+# from the project root
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+
 pip install -r requirements.txt
+```
 
-# Create necessary directories
-mkdir models cache
+### 2. Build the data store
 
-# Start the backend server
+```bash
+# Pulls race results into data/races/*.parquet.
+# Uses the FastF1 cache if present; otherwise downloads (incremental + rate-limit safe).
+python f1_data_collector.py
+```
+
+> First run on a fresh machine downloads data and can take a while. Re-runs are
+> instant — already-stored races are skipped. To pull the **current season**
+> (e.g. 2026), just run it again; it fetches only the new, already-completed races.
+
+### 3. Train the model
+
+```bash
+python train.py
+```
+
+This prints honest validation metrics, then saves `models/position_model.pkl`,
+`models/scaler.pkl`, `models/feature_columns.json`, `models/driver_stats.json`.
+
+### 4. Start the API
+
+```bash
 python f1_api_backend.py
+# → http://localhost:8000   (docs at /docs)
 ```
 
-The API will be available at `http://localhost:8000`
-
-#### 3. Train the Models
+### 5. Start the frontend (new terminal)
 
 ```bash
-# Train models with historical data (2022-2025)
-curl -X POST "http://localhost:8000/train" \
-     -H "Content-Type: application/json" \
-     -d '{"years": [2022, 2023, 2024, 2025], "retrain": false}'
-```
-
-Training takes approximately 15-20 minutes for 3-4 years of data.
-
-#### 4. Frontend Setup
-
-```bash
-# Navigate to frontend directory
 cd f1-frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm start
+# → http://localhost:3000
 ```
 
-The app will open at `http://localhost:3000`
+Open **http://localhost:3000**, set the grid + conditions, hit **Run Prediction**. 🏎️
+
+> **Retraining later:** re-run `python f1_data_collector.py` (gets new races) then
+> `python train.py`, and restart the API. The API never trains — it only serves.
 
 ---
 
-## 💻 Usage
+## 📦 Git — push it (one clean commit)
 
-### Making Predictions
-
-1. **Select Track** - Choose from 20+ F1 circuits
-2. **Set Weather Conditions**
-   - Track temperature (°C)
-   - Air temperature (°C)
-   - Humidity (%)
-   - Rainfall (yes/no)
-3. **Add Drivers** - Select drivers and their grid positions
-4. **Predict Race** - Click the button to get AI predictions
-
-### API Usage
+Some artifacts used to be committed but are now generated locally (models, data,
+training csv). Untrack them, keep the source + the small JSON the app needs.
 
 ```bash
-# Get prediction
-curl -X POST "http://localhost:8000/predict" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "race_conditions": {
-         "track_name": "Monaco",
-         "country": "Monaco",
-         "track_temp": 25.0,
-         "air_temp": 20.0,
-         "humidity": 50.0,
-         "rainfall": false,
-         "track_type": "street"
-       },
-       "drivers": [
-         {"driver_code": "VER", "grid_position": 1},
-         {"driver_code": "HAM", "grid_position": 2}
-       ]
-     }'
+# 1. See what's going on
+git status
+
+# 2. Stop tracking generated/large files (keep them on disk)
+git rm -r --cached cache data 2>/dev/null
+git rm --cached f1_training_data.csv 2>/dev/null
+git rm --cached models/position_model.pkl models/scaler.pkl 2>/dev/null
+git rm --cached models/win_model.pkl models/podium_model.pkl models/label_encoders.pkl 2>/dev/null
+
+# 3. Stage everything (new code, docs, frontend, .gitignore)
+git add -A
+
+# 4. Commit
+git commit -m "Rebuild Ghost Lap: leakage-free pipeline, single ranking model, new UI"
+
+# 5. Push
+git push origin main
 ```
 
----
-
-## 📊 Model Performance
-
-| Metric                  | Value               |
-| ----------------------- | ------------------- |
-| Win Prediction Accuracy | 77-82%              |
-| Position MAE            | 2.0-2.5 positions   |
-| Training Data           | 1,700+ race results |
-| Years Covered           | 2022-2025           |
-| Drivers Analyzed        | 25+ active drivers  |
+> `.gitignore` already excludes `cache/`, `data/`, `*.csv`, and `models/*.pkl`.
+> The trained model is regenerated with `python train.py`, so it doesn't need to
+> live in git. `models/feature_columns.json` and `models/driver_stats.json` stay
+> tracked (small, and handy to inspect).
 
 ---
 
-## 🏗️ Project Structure
+## ⚠️ Disclaimer
 
-```
-f1-race-predictor/
-├── f1_data_collector.py      # Data collection from FastF1 API
-├── f1_ml_predictor.py         # ML model training & prediction
-├── f1_api_backend.py          # FastAPI server
-├── requirements.txt           # Python dependencies
-├── models/                    # Trained ML models
-│   ├── win_model.pkl
-│   ├── podium_model.pkl
-│   └── position_model.pkl
-├── cache/                     # FastF1 data cache
-└── f1-frontend/              # React application
-    ├── src/
-    │   └── App.js            # Main React component
-    ├── public/
-    └── package.json
-```
+For learning and fun. F1 is chaotic — these are probabilistic predictions, not
+betting advice.
 
----
-
-## 🎓 How It Works
-
-### 1. Data Collection
-
-- Downloads historical F1 race data using FastF1 API
-- Processes race results, qualifying positions, and weather data
-- Creates driver performance profiles (win rate, podium rate, average finish, DNF rate)
-
-### 2. Feature Engineering
-
-- **Driver Features**: Historical performance metrics independent of teams
-- **Track Features**: Circuit classification (street/highspeed/technical)
-- **Weather Features**: Temperature, humidity, rainfall conditions
-- **Grid Position**: Starting position from qualifying
-
-### 3. Model Training
-
-Three separate models work together:
-
-- **Win Predictor** (XGBoost): Predicts probability of winning
-- **Podium Predictor** (Random Forest): Predicts top-3 finish probability
-- **Position Predictor** (XGBoost Regressor): Predicts exact finishing position
-
-### 4. Prediction
-
-Combines all three models to provide:
-
-- Predicted finishing position (1-20)
-- Win probability (0-100%)
-- Podium probability (0-100%)
-- Overall confidence score
-
----
-
-## 🌟 Key Design Decisions
-
-### Driver-Centric Approach
-
-Unlike traditional models that focus on teams/cars, this system prioritizes **individual driver performance**. This makes predictions robust to driver team changes.
-
-**Benefits:**
-
-- Predictions remain accurate when drivers switch teams
-- Captures driver skill independent of car performance
-- More reliable for long-term predictions
-
-### Weather Integration
-
-Real weather conditions significantly impact race outcomes:
-
-- Hot temperatures favor certain drivers/teams
-- Rain creates unpredictable conditions
-- Humidity affects tire performance
-
-### Track Classification
-
-Different track types favor different driving styles:
-
-- **Street Circuits** (Monaco, Singapore) - Precision and qualifying crucial
-- **High-Speed** (Monza, Spa) - Top speed and slipstream important
-- **Technical** (Hungary, Suzuka) - Downforce and cornering key
-
----
-
-## 🚀 Deployment
-
-### Frontend (Vercel)
-
-```bash
-cd f1-frontend
-vercel --prod
-```
-
-### Backend (Render)
-
-1. Create `render.yaml`
-2. Connect GitHub repository
-3. Deploy with one click
-
-See [Deployment Guide](./DEPLOYMENT.md) for detailed instructions.
-
----
-
-## 🤝 Contributing
-
-Contributions are what make the open-source community amazing! Any contributions you make are **greatly appreciated**.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 🙏 Acknowledgments
-
-- [FastF1](https://github.com/theOehrly/Fast-F1) - Amazing F1 data API
-- [XGBoost](https://xgboost.readthedocs.io/) - High-performance ML library
-- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
-- [React](https://react.dev/) - UI framework
-- Formula 1 community for inspiration
-
----
-
-## 📈 Future Enhancements
-
-- [ ] Tire strategy prediction
-- [ ] Safety car probability
-- [ ] Championship points prediction
-- [ ] Historical race replay & analysis
-- [ ] Mobile app (React Native)
-- [ ] Real-time race updates
-- [ ] Driver head-to-head comparisons
-- [ ] Constructor championship predictions
-
----
-
-<div align="center">
-
-**⭐ Star this repo if you found it helpful! ⭐**
-
-Made with ❤️ and ☕ by Gururaghavendra
-
-</div>
+**Built by Guru with tons of coffee and brainstroming lolll**

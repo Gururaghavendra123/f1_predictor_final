@@ -1,371 +1,213 @@
+"""
+F1 Race Predictor API — predict-only.
+
+Loads the model + driver/team stats snapshot produced by train.py and serves
+ranked race predictions. Training/data-collection is offline (run train.py); the
+API never does heavy work in a request.
+"""
+from contextlib import asynccontextmanager
+from typing import List
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-import pandas as pd
-import os
-import asyncio
-from contextlib import asynccontextmanager
 
-# Import our custom modules
-from f1_data_collector import F1DataCollector
 from f1_ml_predictor import F1Predictor
+from f1_features import features_for_prediction
 
-# Global variables
-predictor = None
-driver_stats = {}
+predictor: F1Predictor | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    global predictor, driver_stats
+    global predictor
     predictor = F1Predictor()
-    
-    # Try to load existing models
-    if not predictor.load_models():
-        print("No existing models found. Ready for training.")
-    
+    if predictor.load():
+        snap = predictor.snapshot or {}
+        print(f"Model loaded. Snapshot as_of {snap.get('as_of')}, "
+              f"{len(snap.get('drivers', {}))} drivers.")
+    else:
+        print("No model found. Run `python train.py` then restart.")
     yield
-    # Shutdown
     print("Shutting down F1 Predictor API")
+
 
 app = FastAPI(
     title="F1 Race Predictor API",
-    description="Predict F1 race outcomes using machine learning",
-    version="1.0.0",
-    lifespan=lifespan
+    description="Predict F1 race outcomes with a single ranking model",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
+# CORS — local-first. Add prod origins back when deploying.
 app.add_middleware(
     CORSMiddleware,
-     allow_origins=[
-        "http://localhost:3000",
-        "https://f1racepredictor.vercel.app/",
-        "https://*.vercel.app",  # This allows any Vercel deployment
-    ],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic models for API
+
+# ---- request/response models ----
 class RaceConditions(BaseModel):
     track_name: str
-    country: str
+    country: str = ""
     track_temp: float = 25.0
     air_temp: float = 20.0
     humidity: float = 50.0
     rainfall: bool = False
-    track_type: str = "normal"  # "street", "highspeed", "technical", "normal"
+    track_type: str = "normal"   # kept for UI compatibility; track type is derived from track_name
+    era: int = 1                 # 0 = 2022-2025 rules, 1 = 2026+ rules
+
 
 class DriverInput(BaseModel):
-    driver_code: str  # e.g., "VER", "HAM"
+    driver_code: str
     grid_position: int = 10
+
 
 class PredictionRequest(BaseModel):
     race_conditions: RaceConditions
     drivers: List[DriverInput]
 
+
 class PredictionResult(BaseModel):
     driver: str
+    predicted_position: int
+    expected_position: float
     win_probability: float
     podium_probability: float
-    predicted_position: int
     confidence: float
 
-class TrainingRequest(BaseModel):
-    years: List[int] = [2022, 2023, 2024]
-    retrain: bool = False
 
-# API Routes
+def _require_model():
+    if predictor is None or not predictor.trained:
+        raise HTTPException(
+            status_code=503,
+            detail="Model not loaded. Run `python train.py`, then restart the API.",
+        )
+    if not predictor.snapshot:
+        raise HTTPException(
+            status_code=503,
+            detail="Stats snapshot missing. Re-run `python train.py`.",
+        )
+
+
+# ---- routes ----
 @app.get("/")
 async def root():
     return {"message": "F1 Race Predictor API", "status": "running"}
 
+
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "models_loaded": predictor.trained if predictor else False
-    }
+    return {"status": "healthy", "model_loaded": bool(predictor and predictor.trained)}
 
-@app.post("/train")
-async def train_models(request: TrainingRequest):
-    """Train or retrain the prediction models"""
-    try:
-        global predictor, driver_stats
-        
-        # Check if models already exist and retrain is not requested
-        if predictor and predictor.trained and not request.retrain:
-            return {
-                "message": "Models already trained. Use retrain=true to force retrain.",
-                "status": "already_trained"
-            }
-        
-        # Initialize data collector
-        collector = F1DataCollector()
-        
-        # Download session data
-        print(f"Starting data collection for years: {request.years}")
-        sessions = collector.get_race_sessions(request.years)
-        
-        if not sessions:
-            raise HTTPException(status_code=400, detail="No session data collected")
-        
-        # Create driver features
-        driver_stats = collector.create_driver_features()
-        
-        # Create training dataset
-        training_df = collector.create_training_dataset()
-        
-        # Save training data
-        training_df.to_csv('f1_training_data.csv', index=False)
-        
-        # Train models
-        predictor = F1Predictor()
-        training_results = predictor.train_models('f1_training_data.csv')
-        
-        return {
-            "message": "Models trained successfully",
-            "status": "success",
-            "data": {
-                "sessions_collected": len(sessions),
-                "training_samples": len(training_df),
-                "drivers_analyzed": len(driver_stats),
-                "model_performance": training_results
-            }
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 
 @app.post("/predict", response_model=List[PredictionResult])
 async def predict_race(request: PredictionRequest):
-    """Predict race outcomes for given conditions and drivers"""
-    try:
-        if not predictor or not predictor.trained:
-            # Try to load models first
-            if not predictor or not predictor.load_models():
-                raise HTTPException(
-                    status_code=400, 
-                    detail="Models not trained. Please call /train endpoint first."
-                )
-        
-        # Prepare race data for prediction
-        race_data = []
-        
-        # Determine track characteristics
-        track_features = get_track_features(
-            request.race_conditions.track_name,
-            request.race_conditions.track_type
+    _require_model()
+    rc = request.race_conditions
+    if not request.drivers:
+        raise HTTPException(status_code=400, detail="No drivers supplied.")
+
+    rows = []
+    for d in request.drivers:
+        feats = features_for_prediction(
+            predictor.snapshot,
+            driver=d.driver_code,
+            grid_position=d.grid_position,
+            event=rc.track_name,
+            era=rc.era,
+            track_temp=rc.track_temp,
+            air_temp=rc.air_temp,
+            humidity=rc.humidity,
+            rainfall=rc.rainfall,
         )
-        
-        for driver in request.drivers:
-            # Get driver historical stats
-            driver_perf = get_driver_performance(driver.driver_code)
-            
-            race_entry = {
-                'driver': driver.driver_code,
-                'country': request.race_conditions.country,
-                'grid_position': driver.grid_position,
-                'track_temp': request.race_conditions.track_temp,
-                'air_temp': request.race_conditions.air_temp,
-                'humidity': request.race_conditions.humidity,
-                'rainfall': int(request.race_conditions.rainfall),
-                **track_features,
-                **driver_perf
-            }
-            
-            race_data.append(race_entry)
-        
-        # Make predictions
-        predictions = predictor.predict_race_outcome(race_data)
-        
-        # Convert to response format
-        results = []
-        for pred in predictions:
-            results.append(PredictionResult(
-                driver=pred['driver'],
-                win_probability=pred['win_probability'],
-                podium_probability=pred['podium_probability'],
-                predicted_position=pred['predicted_position'],
-                confidence=pred['confidence']
-            ))
-        
-        return results
-        
+        feats['driver'] = d.driver_code
+        rows.append(feats)
+
+    try:
+        ranked = predictor.rank_race(rows)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+
+    return [PredictionResult(**r) for r in ranked]
+
 
 @app.get("/drivers")
 async def get_available_drivers():
-    """Get list of available drivers for prediction"""
-    if predictor and predictor.trained:
-        drivers = predictor.get_driver_list()
-        return {"drivers": drivers}
-    else:
-        # Return common F1 drivers if models not trained
-        return {
-            "drivers": [
-                "VER", "HAM", "RUS", "LEC", "SAI", "NOR", "PIA", "ALO", "STR",
-                "PER", "GAS", "OCO", "ALB", "SAR", "MAG", "HUL", "RIC", "TSU", "ZHO", "BOT"
-            ]
-        }
+    """Drivers the model actually knows (from the trained snapshot)."""
+    if predictor and predictor.snapshot:
+        return {"drivers": sorted(predictor.snapshot.get('drivers', {}).keys())}
+    return {"drivers": []}
+
 
 @app.get("/tracks")
 async def get_track_info():
-    """Get information about F1 tracks"""
+    """Tracks for the UI. Names match FastF1 event names so track history resolves."""
     return {
         "tracks": [
-            {"name": "Monaco", "country": "Monaco", "type": "street"},
-            {"name": "Silverstone", "country": "United Kingdom", "type": "highspeed"},
-            {"name": "Monza", "country": "Italy", "type": "highspeed"},
-            {"name": "Spa", "country": "Belgium", "type": "highspeed"},
-            {"name": "Suzuka", "country": "Japan", "type": "technical"},
-            {"name": "Interlagos", "country": "Brazil", "type": "normal"},
-            {"name": "Circuit of the Americas", "country": "United States", "type": "normal"},
-            {"name": "Albert Park", "country": "Australia", "type": "normal"},
-            {"name": "Imola", "country": "Italy", "type": "technical"},
-            {"name": "Miami", "country": "United States", "type": "street"},
-            {"name": "Barcelona", "country": "Spain", "type": "normal"},
-            {"name": "Red Bull Ring", "country": "Austria", "type": "normal"},
-            {"name": "Paul Ricard", "country": "France", "type": "normal"},
-            {"name": "Hungaroring", "country": "Hungary", "type": "technical"},
-            {"name": "Zandvoort", "country": "Netherlands", "type": "normal"},
-            {"name": "Monza", "country": "Italy", "type": "highspeed"},
-            {"name": "Singapore", "country": "Singapore", "type": "street"},
-            {"name": "Baku", "country": "Azerbaijan", "type": "street"},
-            {"name": "Jeddah", "country": "Saudi Arabia", "type": "street"},
-            {"name": "Abu Dhabi", "country": "United Arab Emirates", "type": "normal"},
-            {"name": "Las Vegas", "country": "United States", "type": "street"}
+            {"name": "Bahrain Grand Prix", "country": "Bahrain", "type": "normal"},
+            {"name": "Saudi Arabian Grand Prix", "country": "Saudi Arabia", "type": "street"},
+            {"name": "Australian Grand Prix", "country": "Australia", "type": "normal"},
+            {"name": "Japanese Grand Prix", "country": "Japan", "type": "technical"},
+            {"name": "Chinese Grand Prix", "country": "China", "type": "normal"},
+            {"name": "Miami Grand Prix", "country": "United States", "type": "street"},
+            {"name": "Emilia Romagna Grand Prix", "country": "Italy", "type": "technical"},
+            {"name": "Monaco Grand Prix", "country": "Monaco", "type": "street"},
+            {"name": "Canadian Grand Prix", "country": "Canada", "type": "normal"},
+            {"name": "Spanish Grand Prix", "country": "Spain", "type": "normal"},
+            {"name": "Austrian Grand Prix", "country": "Austria", "type": "highspeed"},
+            {"name": "British Grand Prix", "country": "United Kingdom", "type": "highspeed"},
+            {"name": "Hungarian Grand Prix", "country": "Hungary", "type": "technical"},
+            {"name": "Belgian Grand Prix", "country": "Belgium", "type": "highspeed"},
+            {"name": "Dutch Grand Prix", "country": "Netherlands", "type": "technical"},
+            {"name": "Italian Grand Prix", "country": "Italy", "type": "highspeed"},
+            {"name": "Azerbaijan Grand Prix", "country": "Azerbaijan", "type": "street"},
+            {"name": "Singapore Grand Prix", "country": "Singapore", "type": "street"},
+            {"name": "United States Grand Prix", "country": "United States", "type": "normal"},
+            {"name": "Mexico City Grand Prix", "country": "Mexico", "type": "normal"},
+            {"name": "São Paulo Grand Prix", "country": "Brazil", "type": "normal"},
+            {"name": "Las Vegas Grand Prix", "country": "United States", "type": "street"},
+            {"name": "Qatar Grand Prix", "country": "Qatar", "type": "normal"},
+            {"name": "Abu Dhabi Grand Prix", "country": "United Arab Emirates", "type": "normal"},
         ]
     }
+
 
 @app.get("/model-info")
 async def get_model_info():
-    """Get information about the trained models"""
     if not predictor or not predictor.trained:
-        return {"status": "not_trained", "message": "Models not trained yet"}
-    
+        return {"status": "not_trained", "message": "Run python train.py"}
+    snap = predictor.snapshot or {}
     return {
         "status": "trained",
         "features_count": len(predictor.feature_columns),
-        "available_drivers": len(predictor.get_driver_list()) if predictor.get_driver_list() else 0,
-        "model_types": ["win_prediction", "podium_prediction", "position_prediction"]
+        "available_drivers": len(snap.get('drivers', {})),
+        "trained_through": snap.get('as_of'),
+        "model_type": "position_ranking",
     }
 
-# Helper functions
-def get_track_features(track_name: str, track_type: str):
-    """Get track feature encoding"""
-    track_features = {
-        'track_is_street': 0,
-        'track_is_highspeed': 0,
-        'track_is_technical': 0
-    }
-    
-    if track_type == "street":
-        track_features['track_is_street'] = 1
-    elif track_type == "highspeed":
-        track_features['track_is_highspeed'] = 1
-    elif track_type == "technical":
-        track_features['track_is_technical'] = 1
-    
-    return track_features
 
-def get_driver_performance(driver_code: str):
-    """Get driver performance stats (simplified for demo)"""
-    # Default performance stats
-    default_stats = {
-        'driver_win_rate': 0.1,
-        'driver_podium_rate': 0.3,
-        'driver_avg_finish': 10.0,
-        'driver_avg_grid': 10.0,
-        'driver_dnf_rate': 0.1,
-        'driver_avg_points': 5.0
-    }
-    
-    # Top drivers with better stats
-    top_drivers = {
-        'VER': {
-            'driver_win_rate': 0.6,
-            'driver_podium_rate': 0.8,
-            'driver_avg_finish': 2.5,
-            'driver_avg_grid': 2.0,
-            'driver_dnf_rate': 0.05,
-            'driver_avg_points': 20.0
-        },
-        'HAM': {
-            'driver_win_rate': 0.3,
-            'driver_podium_rate': 0.6,
-            'driver_avg_finish': 4.0,
-            'driver_avg_grid': 3.5,
-            'driver_dnf_rate': 0.03,
-            'driver_avg_points': 15.0
-        },
-        'LEC': {
-            'driver_win_rate': 0.2,
-            'driver_podium_rate': 0.5,
-            'driver_avg_finish': 5.0,
-            'driver_avg_grid': 4.0,
-            'driver_dnf_rate': 0.08,
-            'driver_avg_points': 12.0
-        },
-        'RUS': {
-            'driver_win_rate': 0.1,
-            'driver_podium_rate': 0.4,
-            'driver_avg_finish': 6.0,
-            'driver_avg_grid': 5.0,
-            'driver_dnf_rate': 0.04,
-            'driver_avg_points': 10.0
-        }
-    }
-    
-    return top_drivers.get(driver_code, default_stats)
+@app.post("/train")
+async def train_models():
+    raise HTTPException(
+        status_code=501,
+        detail="Training is offline. Run `python train.py`, then restart the API.",
+    )
 
-# Additional utility endpoints
+
 @app.post("/retrain")
 async def retrain_models():
-    """Force retrain models with existing data"""
-    try:
-        if not os.path.exists('f1_training_data.csv'):
-            raise HTTPException(status_code=400, detail="No training data found. Please call /train first.")
-        
-        global predictor
-        predictor = F1Predictor()
-        training_results = predictor.train_models('f1_training_data.csv')
-        
-        return {
-            "message": "Models retrained successfully",
-            "status": "success",
-            "performance": training_results
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Retraining failed: {str(e)}")
+    raise HTTPException(
+        status_code=501,
+        detail="Retraining is offline. Run `python train.py`, then restart the API.",
+    )
 
-@app.get("/prediction-template")
-async def get_prediction_template():
-    """Get a template for making predictions"""
-    return {
-        "race_conditions": {
-            "track_name": "Monaco",
-            "country": "Monaco",
-            "track_temp": 25.0,
-            "air_temp": 20.0,
-            "humidity": 50.0,
-            "rainfall": False,
-            "track_type": "street"
-        },
-        "drivers": [
-            {"driver_code": "VER", "grid_position": 1},
-            {"driver_code": "HAM", "grid_position": 2},
-            {"driver_code": "LEC", "grid_position": 3}
-        ]
-    }
 
 if __name__ == "__main__":
-    import uvicorn
     import os
+    import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -6,16 +6,13 @@ __pycache__/
 .Python
 env/
 venv/
-cache/
-models/*.pkl
-*.csv
+.venv/
 
 # Node
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.DS_Store
 .env.local
 .env.development.local
 .env.test.local
@@ -31,6 +28,14 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Project data / artifacts (regenerable — do not commit)
 cache/
+data/
 f1_training_data.csv
+models/*.pkl
+
+# models/*.json (feature list + driver stats snapshot) ARE tracked
+
+# Private / local-only (do NOT push)
+.claude/
+INTERVIEW.md
