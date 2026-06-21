@@ -9,7 +9,7 @@ immersive pit-wall style React UI.
 
 > Honest accuracy (trained on 2022–2024, tested on the **unseen** 2025 season):
 > **50% winner accuracy · 61% podium overlap · 3.55 position MAE.**
-> No data leakage, no inflated numbers — see [`INTERVIEW.md`](INTERVIEW.md) for the full reasoning.
+> No data leakage, no inflated numbers
 
 ---
 
